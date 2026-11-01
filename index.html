@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Desk</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <style>
   :root {
@@ -14,13 +15,13 @@
     :root { --wood1:#5b3c20; --wood2:#4d3119; --wood3:#563820; --glow:rgba(255,190,110,.28); --tray:rgba(24,14,6,.85); }
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
+  html, body { margin: 0; }
   body {
     font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif; color: var(--tray-fg);
     background:
       radial-gradient(ellipse 70% 55% at 50% 30%, var(--glow), transparent 70%),
       repeating-linear-gradient(92deg, var(--wood1) 0 3px, var(--wood2) 3px 8px, var(--wood3) 8px 10px, var(--wood2) 10px 15px);
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 16px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 16px; min-height: 100vh;
   }
   .hidden { display: none !important; }
 
@@ -40,7 +41,7 @@
   #err { min-height: 18px; margin-top: 10px; font-size: 13px; color: #a02818; }
 
   #app { display: flex; flex-direction: column; align-items: center; gap: 16px; width: 100%; }
-  #sheet { width: min(760px, 100%); padding: 10px; }
+  #sheet { width: min(760px, 100%, calc((100vh - 150px) * var(--ar, 1.333))); padding: 10px; }
   canvas { display: block; width: 100%; background: var(--paper); touch-action: none; cursor: crosshair; image-rendering: pixelated; }
 
   .tray { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px; padding: 8px 12px;
@@ -101,12 +102,13 @@
 
 <script>
 // ---- settings (the broker address is not a secret; the password is what protects the display)
-const BROKER = "r1199970.ala.eu-central-1.emqxsl.com";
+const BROKER = "YOUR-ADDRESS.emqxsl.com";
 const W = 320, H = 240;                    // display size; will become 800 x 480 with the new ePaper
 const PAPER = "#fbf9f3", INK = "#1b1b1f", SIZES = [2, 4, 8];
 
 const $ = id => document.getElementById(id);
 const cv = $("c"); cv.width = W; cv.height = H;
+document.documentElement.style.setProperty("--ar", W / H);
 const ctx = cv.getContext("2d", { willReadFrequently: true });
 let client = null, P = "", touched = false, everConnected = false, tool = "pen", sizeIdx = 1;
 const undoStack = [];
@@ -127,7 +129,7 @@ $("login").addEventListener("submit", e => {
   e.preventDefault();
   const user = $("user").value.trim();
   try { localStorage.setItem("pp_user", user); } catch (e2) {}
-  P = "penpad/" + user + "/"; everConnected = false; $("err").textContent = "";
+  P = new URLSearchParams(location.search).has("legacy") ? "penpad/" : "penpad/" + user + "/"; everConnected = false; $("err").textContent = "";
   client = mqtt.connect("wss://" + BROKER + ":8084/mqtt", {
     username: user, password: $("pass").value,
     clientId: "web-" + Math.random().toString(16).slice(2, 8), reconnectPeriod: 3000
