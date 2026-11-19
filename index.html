@@ -60,6 +60,7 @@
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); padding: 7px 16px; border-radius: 999px;
     background: var(--tray); font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none; }
   #toast.show { opacity: 1; }
+  #penR { color: #ff9a8a; } .tray #penR[aria-pressed="true"] { color: #b3261e; }
 </style>
 </head>
 <body>
@@ -80,7 +81,8 @@
   </div>
   <div id="sheet" class="paper"><canvas id="c"></canvas></div>
   <div class="tray">
-    <button id="pen" aria-pressed="true" title="Pen"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+    <button id="penK" aria-pressed="true" title="Black pen"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+    <button id="penR" aria-pressed="false" title="Red pen"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
     <button id="eraser" aria-pressed="false" title="Eraser"><svg viewBox="0 0 24 24"><path d="m7 21-4.3-4.3a1 1 0 0 1 0-1.4l9.6-9.6a1 1 0 0 1 1.4 0l5.6 5.6a1 1 0 0 1 0 1.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
     <span class="sep"></span>
     <button class="size" data-i="0" aria-pressed="false" title="Fine"><svg viewBox="0 0 24 24"><circle class="dot" cx="12" cy="12" r="2"/></svg></button>
@@ -92,8 +94,9 @@
     <span class="sep"></span>
     <button id="photo" title="Add picture"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></button>
     <button id="pastebtn" title="Paste picture"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg></button>
-    <button id="sendimg" title="Resend to display"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></button>
+    <button id="colormode" aria-pressed="false" title="Pictures: black and white (tap for red too)"><svg viewBox="0 0 24 24"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/></svg></button>
     <span class="sep"></span>
+    <button id="sendimg" title="Send to display now"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></button>
     <button id="logout" title="Sign out"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg></button>
   </div>
   <input type="file" id="file" accept="image/*" hidden>
@@ -103,128 +106,184 @@
 <script>
 // ---- settings (the broker address is not a secret; the password is what protects the display)
 const BROKER = "r1199970.ala.eu-central-1.emqxsl.com";
-const W = 320, H = 240;                    // display size; will become 800 x 480 with the new ePaper
-const PAPER = "#fbf9f3", INK = "#1b1b1f", SIZES = [2, 4, 8];
+const AUTO_SEND_MS = 10000;   // the page sends the drawing this long after you stop drawing
+
+// ==== PURE START (image <-> e-paper planes; no browser objects)
+const W = 400, H = 300, ROWS = 30, NCH = H / ROWS, PLANE = W * H / 8, CHB = ROWS * W / 8;
+const PAPER = "#fbf9f3", INK = "#1b1b1f", RED = "#c8281e", SIZES = [2, 3, 6];
+const PAPER_RGB = [251, 249, 243], INK_RGB = [27, 27, 31], RED_RGB = [200, 40, 30];
+// 0 = white, 1 = black, 2 = red
+function classify(r, g, b) {
+  if (r - (g + b) / 2 > 55) return 2;
+  return (0.299 * r + 0.587 * g + 0.114 * b) < 140 ? 1 : 0;
+}
+// bw plane: 1 = white, 0 = black. red plane: 1 = red. 50 bytes per row, leftmost pixel = top bit.
+function planesFromRGBA(d) {
+  const bw = new Uint8Array(PLANE).fill(0xFF), rd = new Uint8Array(PLANE);
+  for (let p = 0; p < W * H; p++) {
+    const c = classify(d[p * 4], d[p * 4 + 1], d[p * 4 + 2]), byte = p >> 3, bit = 0x80 >> (p & 7);
+    if (c === 1) bw[byte] &= ~bit; else if (c === 2) rd[byte] |= bit;
+  }
+  return { bw, rd };
+}
+function rgbaFromPlanes(bw, rd, d) {
+  for (let p = 0; p < W * H; p++) {
+    const bit = 0x80 >> (p & 7), byte = p >> 3;
+    const c = (rd[byte] & bit) ? RED_RGB : ((bw[byte] & bit) ? PAPER_RGB : INK_RGB);
+    d[p * 4] = c[0]; d[p * 4 + 1] = c[1]; d[p * 4 + 2] = c[2]; d[p * 4 + 3] = 255;
+  }
+}
+// Floyd-Steinberg dithering to black/white (and red if useRed). Writes the result back into d.
+function ditherRGBA(d, useRed) {
+  const f = new Float32Array(W * H * 3);
+  for (let p = 0; p < W * H; p++) { f[p * 3] = d[p * 4]; f[p * 3 + 1] = d[p * 4 + 1]; f[p * 3 + 2] = d[p * 4 + 2]; }
+  const spread = (x, y, w, er, eg, eb) => {
+    if (x < 0 || x >= W || y >= H) return;
+    const i = (y * W + x) * 3; f[i] += er * w; f[i + 1] += eg * w; f[i + 2] += eb * w;
+  };
+  const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 3, r = clamp(f[i]), g = clamp(f[i + 1]), b = clamp(f[i + 2]);
+    let t;
+    if (useRed && r > 140 && r - (g + b) / 2 > 70) t = RED_RGB;
+    else t = (0.299 * r + 0.587 * g + 0.114 * b) < 128 ? [0, 0, 0] : [255, 255, 255];
+    const er = r - t[0], eg = g - t[1], eb = b - t[2];
+    spread(x + 1, y, 7 / 16, er, eg, eb); spread(x - 1, y + 1, 3 / 16, er, eg, eb);
+    spread(x, y + 1, 5 / 16, er, eg, eb); spread(x + 1, y + 1, 1 / 16, er, eg, eb);
+    const q = (y * W + x) * 4; d[q] = t[0]; d[q + 1] = t[1]; d[q + 2] = t[2]; d[q + 3] = 255;
+  }
+}
+// ==== PURE END
 
 const $ = id => document.getElementById(id);
 const cv = $("c"); cv.width = W; cv.height = H;
 document.documentElement.style.setProperty("--ar", W / H);
 const ctx = cv.getContext("2d", { willReadFrequently: true });
-let client = null, P = "", touched = false, everConnected = false, tool = "pen", sizeIdx = 1;
-const undoStack = [];
+let client = null, P = "", touched = false, everConnected = false, tool = "k", sizeIdx = 1, colorPics = false;
+const undoStack = []; let loginTimer = null, syncTimer = null, restoreTimer = null;
 
 function blank() { ctx.fillStyle = PAPER; ctx.fillRect(0, 0, W, H); }
 blank();
 try { $("user").value = localStorage.getItem("pp_user") || ""; } catch (e) {}
 
-function toast(t) { const el = $("toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 1800); }
-function rgb332(hex) {
-  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-  return (r>>5<<5) | (g>>5<<2) | (b>>6);
-}
+function toast(t) { const el = $("toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 2200); }
 function send(bytes) { if (client && client.connected) client.publish(P + "cmd", bytes); }
 
 // ---- sign in: each account has its own topic namespace, so each display is separate
 $("login").addEventListener("submit", e => {
   e.preventDefault();
+  if (BROKER.startsWith("YOUR-ADDRESS")) { $("err").textContent = "Set the BROKER address at the top of the script in index.html first."; return; }
   const user = $("user").value.trim();
   try { localStorage.setItem("pp_user", user); } catch (e2) {}
-  P = new URLSearchParams(location.search).has("legacy") ? "penpad/" : "penpad/" + user + "/"; everConnected = false; $("err").textContent = "";
+  P = "penpad/" + user + "/"; everConnected = false; $("err").textContent = "Connecting…";
+  clearTimeout(loginTimer);
+  loginTimer = setTimeout(() => { if (!everConnected) { $("err").textContent = "Could not reach the server. Check the BROKER address in index.html."; client.end(true); } }, 10000);
   client = mqtt.connect("wss://" + BROKER + ":8084/mqtt", {
     username: user, password: $("pass").value,
     clientId: "web-" + Math.random().toString(16).slice(2, 8), reconnectPeriod: 3000
   });
   client.on("connect", () => {
-    if (!everConnected) { everConnected = true; $("login").classList.add("hidden"); $("app").classList.remove("hidden"); }
+    if (!everConnected) { clearTimeout(loginTimer); everConnected = true; $("login").classList.add("hidden"); $("app").classList.remove("hidden"); }
     $("lampBroker").classList.add("on"); $("tBroker").textContent = "connected";
-    client.subscribe([P + "evt", P + "status", P + "frame/#"]);
+    client.subscribe([P + "status", P + "frame/#"]);
     if (touched) scheduleSync(500);
   });
   client.on("close", () => { $("lampBroker").classList.remove("on"); $("tBroker").textContent = "reconnecting"; });
   client.on("error", err => {
-    if (!everConnected) { $("err").textContent = /not authorized|bad user/i.test(err.message) ? "Wrong username or password." : "Could not connect."; client.end(true); }
+    if (!everConnected) { clearTimeout(loginTimer); $("err").textContent = /not authorized|bad user/i.test(err.message) ? "Wrong username or password." : "Could not connect."; client.end(true); }
   });
   client.on("message", (topic, payload, packet) => {
-    if (topic.startsWith(P + "frame/")) { restoreChunk(+topic.slice((P + "frame/").length), payload, packet.retain); return; }
-    const txt = new TextDecoder().decode(payload);
-    if (topic === P + "status") { const on = txt === "online"; $("lampPico").classList.toggle("on", on); $("tPico").textContent = on ? "display online" : "display offline"; }
-    if (topic === P + "evt") { try { const ev = JSON.parse(txt); if (ev.down) toast("Button " + ev.btn); } catch (e3) {} }
+    if (topic.startsWith(P + "frame/")) { onFrame(topic.slice((P + "frame/").length), payload, packet.retain); return; }
+    if (topic === P + "status") { const on = new TextDecoder().decode(payload) === "online"; $("lampPico").classList.toggle("on", on); $("tPico").textContent = on ? "display online" : "display offline"; }
   });
 });
 $("logout").onclick = () => { if (client) client.end(true); location.reload(); };
 
 // ---- tools
-function setTool(t) { tool = t; $("pen").setAttribute("aria-pressed", t === "pen"); $("eraser").setAttribute("aria-pressed", t === "eraser"); }
-$("pen").onclick = () => setTool("pen"); $("eraser").onclick = () => setTool("eraser");
+function setTool(t) { tool = t; for (const [k, id] of [["k", "penK"], ["r", "penR"], ["e", "eraser"]]) $(id).setAttribute("aria-pressed", k === t); }
+$("penK").onclick = () => setTool("k"); $("penR").onclick = () => setTool("r"); $("eraser").onclick = () => setTool("e");
 document.querySelectorAll(".size").forEach(b => b.onclick = () => {
   sizeIdx = +b.dataset.i; document.querySelectorAll(".size").forEach(x => x.setAttribute("aria-pressed", x === b));
 });
-const penColor = () => tool === "eraser" ? PAPER : INK;
-const penSize = () => SIZES[sizeIdx] * (tool === "eraser" ? 3 : 1);
+const penColor = () => tool === "r" ? RED : tool === "e" ? PAPER : INK;
+const penSize = () => SIZES[sizeIdx] * (tool === "e" ? 3 : 1);
 
 function snapshot() { undoStack.push(ctx.getImageData(0, 0, W, H)); if (undoStack.length > 10) undoStack.shift(); }
-$("undo").onclick = () => { const s = undoStack.pop(); if (!s) return; ctx.putImageData(s, 0, 0); touched = true; scheduleSync(100); };
-$("clear").onclick = () => { snapshot(); blank(); send(new Uint8Array([1, 255])); touched = true; scheduleSync(300); };
+function snapToPalette() {   // make the preview show exactly what the e-paper can show
+  const img = ctx.getImageData(0, 0, W, H), { bw, rd } = planesFromRGBA(img.data);
+  rgbaFromPlanes(bw, rd, img.data); ctx.putImageData(img, 0, 0);
+}
+$("undo").onclick = () => { const s = undoStack.pop(); if (!s) return; ctx.putImageData(s, 0, 0); touched = true; scheduleSync(3000); };
+$("clear").onclick = () => { snapshot(); blank(); touched = true; scheduleSync(3000); };
 
-// ---- drawing: strokes stream as line segments for a live feel
-let drawing = false, last = null, queue = [];
+// ---- drawing: nothing is sent while you draw (e-paper is slow); the page sends after a pause
+let drawing = false, last = null;
 function pos(e) {
   const r = cv.getBoundingClientRect();
-  return [Math.max(0, Math.min(W-1, Math.round((e.clientX - r.left) * W / r.width))),
-          Math.max(0, Math.min(H-1, Math.round((e.clientY - r.top) * H / r.height)))];
+  return [Math.max(0, Math.min(W - 1, Math.round((e.clientX - r.left) * W / r.width))),
+          Math.max(0, Math.min(H - 1, Math.round((e.clientY - r.top) * H / r.height)))];
 }
-cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); snapshot(); drawing = true; touched = true; last = pos(e); seg(last, last); });
-cv.addEventListener("pointermove", e => { if (!drawing) return; const p = pos(e); seg(last, p); last = p; });
-cv.addEventListener("pointerup", () => { drawing = false; flush(); scheduleSync(); });
 function seg(a, b) {
   ctx.strokeStyle = penColor(); ctx.lineWidth = penSize(); ctx.lineCap = "round";
-  ctx.beginPath(); ctx.moveTo(a[0]+.5, a[1]+.5); ctx.lineTo(b[0]+.5, b[1]+.5); ctx.stroke();
-  queue.push([...a, ...b]);
+  ctx.beginPath(); ctx.moveTo(a[0] + .5, a[1] + .5); ctx.lineTo(b[0] + .5, b[1] + .5); ctx.stroke();
 }
-function flush() {
-  while (queue.length) {
-    const part = queue.splice(0, 100);
-    const buf = new ArrayBuffer(3 + part.length * 8), dv = new DataView(buf);
-    dv.setUint8(0, 2); dv.setUint8(1, rgb332(penColor())); dv.setUint8(2, penSize());
-    part.forEach((s, i) => s.forEach((v, j) => dv.setUint16(3 + i*8 + j*2, v, true)));
-    send(new Uint8Array(buf));
-  }
-}
-setInterval(flush, 40);
+function endStroke() { if (!drawing) return; drawing = false; snapToPalette(); scheduleSync(AUTO_SEND_MS); }
+cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); clearTimeout(syncTimer); snapshot(); drawing = true; touched = true; last = pos(e); seg(last, last); });
+cv.addEventListener("pointermove", e => { if (!drawing) return; const p = pos(e); seg(last, p); last = p; });
+cv.addEventListener("pointerup", endStroke);
+cv.addEventListener("pointercancel", endStroke);
 
-// ---- saved drawing: stored on the broker as retained messages (chunks of 16 rows)
-const synced = {}; let syncTimer = null;
-function scheduleSync(ms = 1000) { clearTimeout(syncTimer); syncTimer = setTimeout(() => syncFrames(false), ms); }
+// ---- saved drawing: two planes stored on the broker as retained messages
+// (10 chunks of 30 rows each: frame/w/0..9 black-white, frame/r/0..9 red). The display reads them whenever it connects.
+const synced = {}, remote = { bw: new Uint8Array(PLANE).fill(0xFF), rd: new Uint8Array(PLANE) };
+function scheduleSync(ms) { clearTimeout(syncTimer); syncTimer = setTimeout(autoSend, ms); }
+function autoSend() { if (syncFrames(false)) toast("Sent to display"); }
 function syncFrames(force) {
-  if (!client || !client.connected) return;
-  const d = ctx.getImageData(0, 0, W, H).data;
-  for (let n = 0; n < H / 16; n++) {
-    const chunk = new Uint8Array(16 * W);
-    for (let i = 0; i < 16 * W; i++) { const p = (n*16*W + i) * 4; chunk[i] = (d[p]>>5<<5) | (d[p+1]>>5<<2) | (d[p+2]>>6); }
-    const old = synced[n];
+  if (!client || !client.connected) return 0;
+  const { bw, rd } = planesFromRGBA(ctx.getImageData(0, 0, W, H).data);
+  let sent = 0;
+  for (const [kind, plane] of [["w", bw], ["r", rd]]) for (let n = 0; n < NCH; n++) {
+    const chunk = plane.slice(n * CHB, (n + 1) * CHB), key = kind + n, old = synced[key];
     if (!force && old && old.every((v, i) => v === chunk[i])) continue;
-    synced[n] = chunk;
-    client.publish(P + "frame/" + n, chunk, { retain: true, qos: 1 });
+    synced[key] = chunk; client.publish(P + "frame/" + kind + "/" + n, chunk, { retain: true, qos: 1 }); sent++;
   }
+  return sent;
 }
-function restoreChunk(n, bytes, retained) {
-  if (bytes.length !== 16 * W || n < 0 || n >= H / 16) return;
-  synced[n] = new Uint8Array(bytes);
-  if (!retained || touched) return;
-  const img = ctx.createImageData(W, 16);
-  for (let i = 0; i < 16 * W; i++) { const v = bytes[i]; img.data.set([(v>>5)*255/7, ((v>>2)&7)*255/7, (v&3)*255/3, 255], i * 4); }
-  ctx.putImageData(img, 0, n * 16);
+function onFrame(sub, payload, retained) {
+  const [kind, num] = sub.split("/"), n = +num;
+  if (payload.length !== CHB || !(n >= 0 && n < NCH) || (kind !== "w" && kind !== "r")) return;
+  synced[kind + n] = new Uint8Array(payload);
+  if (!retained) return;
+  (kind === "w" ? remote.bw : remote.rd).set(payload, n * CHB);
+  clearTimeout(restoreTimer);
+  restoreTimer = setTimeout(() => {   // only restore stored state into an untouched page
+    if (touched) return;
+    const img = ctx.createImageData(W, H); rgbaFromPlanes(remote.bw, remote.rd, img.data); ctx.putImageData(img, 0, 0);
+  }, 300);
 }
-$("sendimg").onclick = () => { syncFrames(true); toast("Sent to display"); };
+$("sendimg").onclick = () => {
+  if (!client || !client.connected) { toast("Not connected"); return; }
+  clearTimeout(syncTimer); syncFrames(false); send(new Uint8Array([4]));   // 4 = redraw the e-paper now
+  toast("Sending to display…");
+};
 window.addEventListener("pagehide", () => syncFrames(false));
 
-// ---- pictures: Ctrl+V, paste button, or file / camera
+// ---- pictures: Ctrl+V, paste button, or file / camera. Black and white by default.
+$("colormode").onclick = () => {
+  colorPics = !colorPics; $("colormode").setAttribute("aria-pressed", colorPics);
+  $("colormode").title = colorPics ? "Pictures: black, white and red (tap for black and white)" : "Pictures: black and white (tap for red too)";
+  toast(colorPics ? "Pictures: black, white and red" : "Pictures: black and white");
+};
 async function loadImage(blob) {
   const bmp = await createImageBitmap(blob);
-  const s = Math.min(W / bmp.width, H / bmp.height), w = bmp.width*s, h = bmp.height*s;
-  snapshot(); blank();
-  ctx.drawImage(bmp, (W-w)/2, (H-h)/2, w, h);
-  touched = true; scheduleSync(300);
+  snapshot();
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+  const s = Math.min(W / bmp.width, H / bmp.height), w = bmp.width * s, h = bmp.height * s;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bmp, (W - w) / 2, (H - h) / 2, w, h);
+  const img = ctx.getImageData(0, 0, W, H); ditherRGBA(img.data, colorPics); ctx.putImageData(img, 0, 0);
+  snapToPalette();
+  touched = true; scheduleSync(1500);
 }
 document.addEventListener("paste", e => { const it = [...e.clipboardData.items].find(i => i.type.startsWith("image/")); if (it) loadImage(it.getAsFile()); });
 $("pastebtn").onclick = async () => {
