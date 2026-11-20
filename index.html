@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -24,6 +24,13 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 16px; min-height: 100vh;
   }
   .hidden { display: none !important; }
+  /* stop iPad/Safari from selecting (blue highlight) or showing the long-press menu while drawing */
+  html, body, #app, #sheet, canvas, .tray, .tray button, #bar {
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+  }
+  #login input { -webkit-user-select: text; user-select: text; }
+  canvas { -webkit-user-drag: none; }
 
   .paper { background: var(--paper); border-radius: 3px; position: relative;
     box-shadow: 0 1px 1px rgba(0,0,0,.25), 0 10px 22px rgba(0,0,0,.35), 0 28px 60px rgba(0,0,0,.25); }
@@ -175,7 +182,7 @@ $("login").addEventListener("submit", e => {
   if (BROKER.startsWith("YOUR-ADDRESS")) { $("err").textContent = "Set the BROKER address at the top of the script in index.html first."; return; }
   const user = $("user").value.trim();
   try { localStorage.setItem("pp_user", user); } catch (e2) {}
-  P = "penpad/" + user + "/"; everConnected = false; $("err").textContent = "Connecting…";
+  P = "penpad/" + user + "/"; everConnected = false; $("err").textContent = "Connectingâ€¦";
   clearTimeout(loginTimer);
   loginTimer = setTimeout(() => { if (!everConnected) { $("err").textContent = "Could not reach the server. Check the BROKER address in index.html."; client.end(true); } }, 10000);
   client = mqtt.connect("wss://" + BROKER + ":8084/mqtt", {
@@ -232,6 +239,7 @@ cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); cle
 cv.addEventListener("pointermove", e => { if (!drawing) return; const p = pos(e); seg(last, p); last = p; });
 cv.addEventListener("pointerup", endStroke);
 cv.addEventListener("pointercancel", endStroke);
+for (const ev of ["contextmenu", "selectstart", "dragstart"]) cv.addEventListener(ev, e => e.preventDefault());
 
 // ---- saved drawing: two planes stored on the broker as retained messages
 // (10 chunks of 30 rows each: frame/w/0..9 black-white, frame/r/0..9 red). The display reads them whenever it connects.
@@ -264,7 +272,7 @@ function onFrame(sub, payload, retained) {
 $("sendimg").onclick = () => {
   if (!client || !client.connected) { toast("Not connected"); return; }
   clearTimeout(syncTimer); syncFrames(false); send(new Uint8Array([4]));   // 4 = redraw the e-paper now
-  toast("Sending to display…");
+  toast("Sending to displayâ€¦");
 };
 window.addEventListener("pagehide", () => syncFrames(false));
 
@@ -300,3 +308,4 @@ $("file").onchange = e => { if (e.target.files[0]) loadImage(e.target.files[0]);
 </script>
 </body>
 </html>
+
