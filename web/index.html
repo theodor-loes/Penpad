@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Aurora</title>
+<meta name="theme-color" content="#9d6b38">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Aurora">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<script src="mqtt.min.js"></script>
+<script src="config.js"></script>
+<style>
+  :root {
+    --wood1:#b07c45; --wood2:#9d6b38; --wood3:#a9753f; --glow:rgba(255,226,170,.55);
+    --paper:#fbf9f3; --ink:#1b1b1f; --tray:rgba(58,36,18,.82); --tray-fg:#f3e7d3; --tray-on:#f3e7d3; --tray-on-fg:#3a2412;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --wood1:#5b3c20; --wood2:#4d3119; --wood3:#563820; --glow:rgba(255,190,110,.28); --tray:rgba(24,14,6,.85); }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif; color: var(--tray-fg);
+    background:
+      radial-gradient(ellipse 70% 55% at 50% 30%, var(--glow), transparent 70%),
+      repeating-linear-gradient(92deg, var(--wood1) 0 3px, var(--wood2) 3px 8px, var(--wood3) 8px 10px, var(--wood2) 10px 15px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 16px; min-height: 100vh;
+  }
+  .hidden { display: none !important; }
+  /* no text selection (blue highlight), no long-press menu, no grey tap flash while drawing on an iPad */
+  html, body, #app, #sheet, #stage, canvas, .tray, .tray button, #bar {
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+  }
+  #login input { -webkit-user-select: text; user-select: text; }
+  canvas { -webkit-user-drag: none; }
+
+  .paper { background: var(--paper); border-radius: 3px; position: relative;
+    box-shadow: 0 1px 1px rgba(0,0,0,.25), 0 10px 22px rgba(0,0,0,.35), 0 28px 60px rgba(0,0,0,.25); }
+  .paper::after { content:""; position:absolute; inset:0; pointer-events:none; border-radius:3px;
+    background: linear-gradient(135deg, rgba(255,255,255,.35), transparent 40%, rgba(0,0,0,.05)); }
+
+  #login { width: min(390px, 92vw); padding: 30px 28px 24px; color: var(--ink); }
+  #login .to { font-size: 12px; letter-spacing: .18em; text-transform: uppercase; opacity: .55; margin: 0 0 12px; }
+  #login .quote { font: italic 400 23px/1.38 Georgia, "Iowan Old Style", serif; margin: 0 0 22px; }
+  #login input { width: 100%; font: inherit; font-size: 16px; padding: 9px 2px; margin-bottom: 10px; color: var(--ink);
+    background: transparent; border: 0; border-bottom: 1.5px solid rgba(0,0,0,.35); outline: none; }
+  #login input:focus { border-bottom-color: var(--ink); }
+  #login button { margin-top: 8px; width: 100%; font: inherit; padding: 10px; cursor: pointer; border: 0; border-radius: 4px;
+    background: var(--ink); color: var(--paper); }
+  #err { min-height: 18px; margin-top: 10px; font-size: 13px; color: #a02818; }
+
+  #app { display: flex; flex-direction: column; align-items: center; gap: 16px; width: 100%; }
+  #sheet { width: min(760px, 100%, calc((100vh - 150px) * var(--ar, 1.333))); padding: 10px; }
+  #stage { position: relative; line-height: 0; }
+  canvas { display: block; width: 100%; background: var(--paper); touch-action: none; cursor: crosshair; image-rendering: pixelated; }
+  #fc { position: absolute; left: 0; top: 0; height: 100%; background: transparent; cursor: grab; image-rendering: auto; }
+  #fc:active { cursor: grabbing; }
+  #datezone { position: absolute; pointer-events: none; display: flex; align-items: center; justify-content: flex-end;
+    border: 1px dashed rgba(27,27,31,.4); border-radius: 2px; background: rgba(255,255,255,.55); color: rgba(27,27,31,.75);
+    font: 700 12px/1 "Liberation Sans", Arial, Helvetica, sans-serif; white-space: nowrap; }
+
+  .tray { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px; padding: 8px 12px;
+    background: var(--tray); border-radius: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.4); backdrop-filter: blur(4px); }
+  .tray .sep { width: 1px; height: 24px; background: rgba(243,231,211,.25); margin: 0 6px; }
+  .tray button { position: relative; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 10px; cursor: pointer;
+    background: transparent; color: var(--tray-fg); transition: background .15s; }
+  .tray button:hover { background: rgba(243,231,211,.15); }
+  .tray button[aria-pressed="true"] { background: var(--tray-on); color: var(--tray-on-fg); }
+  .tray #penR { color: #ff9a8a; } .tray #penR[aria-pressed="true"] { color: #b3261e; }
+  .tray #okfloat { background: #e9d9b6; color: #3a2412; } .tray #okfloat:hover { background: #f4e7c9; }
+  .tray svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .tray svg circle.dot { fill: currentColor; stroke: none; }
+  .tray .badge { position: absolute; right: 3px; bottom: 2px; font: 700 10px/1 system-ui, sans-serif; opacity: .9; }
+
+  #bar { display: flex; gap: 14px; align-items: center; font-size: 13px; padding: 6px 14px; border-radius: 999px; background: var(--tray); }
+  .lamp { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #8a7a68; margin-right: 6px; }
+  .lamp.on { background: #7fd66b; box-shadow: 0 0 8px #7fd66b; }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); padding: 7px 16px; border-radius: 999px;
+    background: var(--tray); font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+  .floating #tray { display: none; }
+</style>
+</head>
+<body>
+
+<form id="login" class="paper" autocomplete="on">
+  <p class="to">Til Aurora</p>
+  <p class="quote">En meldingstråd for bare deg og meg.</p>
+  <input id="user" name="username" placeholder="Brukernavn" autocomplete="username" autocapitalize="none" autocorrect="off" required>
+  <input id="pass" name="password" type="password" placeholder="Passord" autocomplete="current-password" required>
+  <button type="submit">Logg inn</button>
+  <div id="err"></div>
+</form>
+
+<div id="app" class="hidden">
+  <div id="bar">
+    <span><i class="lamp" id="lampBroker"></i><span id="tBroker">kobler til</span></span>
+    <span><i class="lamp" id="lampPico"></i><span id="tPico">skjermen: ukjent</span></span>
+  </div>
+  <div id="sheet" class="paper">
+    <div id="stage">
+      <canvas id="c"></canvas>
+      <canvas id="fc" class="hidden"></canvas>
+      <div id="datezone" class="hidden"><span id="datetxt"></span></div>
+    </div>
+  </div>
+
+  <div id="tray" class="tray">
+    <button id="penK" aria-pressed="true" title="Svart penn"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+    <button id="penR" aria-pressed="false" title="Rød penn"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+    <button id="eraser" aria-pressed="false" title="Viskelær"><svg viewBox="0 0 24 24"><path d="m7 21-4.3-4.3a1 1 0 0 1 0-1.4l9.6-9.6a1 1 0 0 1 1.4 0l5.6 5.6a1 1 0 0 1 0 1.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
+    <span class="sep"></span>
+    <button class="size" data-i="0" aria-pressed="false" title="Tynn"><svg viewBox="0 0 24 24"><circle class="dot" cx="12" cy="12" r="2"/></svg></button>
+    <button class="size" data-i="1" aria-pressed="true" title="Middels"><svg viewBox="0 0 24 24"><circle class="dot" cx="12" cy="12" r="3.5"/></svg></button>
+    <button class="size" data-i="2" aria-pressed="false" title="Tykk"><svg viewBox="0 0 24 24"><circle class="dot" cx="12" cy="12" r="5.5"/></svg></button>
+    <span class="sep"></span>
+    <button id="undo" title="Angre"><svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
+    <button id="clear" title="Tøm siden"><svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/></svg></button>
+    <span class="sep"></span>
+    <button id="photo" title="Legg til bilde"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></button>
+    <button id="pastebtn" title="Lim inn bilde"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg></button>
+    <button id="datebtn" aria-pressed="false" title="Vis dato på skjermen"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></button>
+    <span class="sep"></span>
+    <button id="sendimg" title="Send til skjermen nå"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></button>
+    <button id="logout" title="Logg ut"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg></button>
+  </div>
+
+  <div id="floatbar" class="tray hidden">
+    <button id="okfloat" title="Plasser bildet"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></button>
+    <button id="nofloat" title="Avbryt"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    <span class="sep"></span>
+    <button id="smaller" title="Mindre"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+    <button id="bigger" title="Større"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button id="fitbtn" title="Tilpass til siden"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
+    <span class="sep"></span>
+    <button id="modebtn" title="Konvertering"><svg viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg><span class="badge" id="modebadge">A</span></button>
+    <button id="colormode" aria-pressed="false" title="Bilder: svart-hvitt (trykk for rødt også)"><svg viewBox="0 0 24 24"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/></svg></button>
+  </div>
+  <input type="file" id="file" accept="image/*" hidden>
+</div>
+<div id="toast"></div>
+
+<script>
+// ---- settings
+const BROKER = window.PENPAD_BROKER || "";     // set once in config.js
+const AUTO_SEND_MS = 10000;                    // the page sends the drawing this long after you stop drawing
+const T = {   // all visible texts in one place
+  notConnected: "Ikke tilkoblet", connecting: "kobler til", connected: "tilkoblet", reconnecting: "kobler til på nytt",
+  dispOn: "skjermen er på nett", dispOff: "skjermen er av",
+  wrong: "Feil brukernavn eller passord.", cannot: "Kunne ikke koble til.", noReach: "Fikk ikke kontakt med serveren.",
+  setBroker: "Sett adressen i config.js først.", loginBusy: "Kobler til …",
+  sending: "Sender til skjermen …", sent: "Sendt til skjermen",
+  noClip: "Ingen bilder på utklippstavlen", clipBlocked: "Utklippstavlen er blokkert her, bruk bildeknappen",
+  placeFirst: "Plasser eller avbryt bildet først",
+  dateOn: "Datoen vises på skjermen", dateOff: "Datoen er skjult",
+  modeAuto: "Auto: velger tekst eller foto", modeText: "Tekst: skarpe bokstaver", modePhoto: "Foto: prikkmønster",
+  picBW: "Bilder: svart-hvitt", picRed: "Bilder: svart, hvitt og rødt",
+  autoText: "Auto: tekst", autoPhoto: "Auto: foto",
+};
+
+// ==== PURE START (image logic; no browser objects, so it can be tested on its own)
+const W = 400, H = 300, ROWS = 30, NCH = H / ROWS, PLANE = W * H / 8, CHB = ROWS * W / 8;
+const PAPER = "#fbf9f3", INK = "#1b1b1f", RED = "#c8281e", SIZES = [2, 3, 6];
+const PAPER_RGB = [251, 249, 243], INK_RGB = [27, 27, 31], RED_RGB = [200, 40, 30];
+const DAYS_NB = ["Søn", "Man", "Tir", "Ons", "Tor", "Fre", "Lør"];
+const MONTHS_NB = ["Jan", "Feb", "Mar", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Des"];
+function dateTextFor(d) { return DAYS_NB[d.getDay()] + " " + d.getDate() + " " + MONTHS_NB[d.getMonth()]; }
+// 0 = white, 1 = black, 2 = red
+function classify(r, g, b) {
+  if (r - (g + b) / 2 > 55) return 2;
+  return (0.299 * r + 0.587 * g + 0.114 * b) < 140 ? 1 : 0;
+}
+// bw plane: 1 = white, 0 = black. red plane: 1 = red. 50 bytes per row, leftmost pixel = top bit.
+function planesFromRGBA(d) {
+  const bw = new Uint8Array(PLANE).fill(0xFF), rd = new Uint8Array(PLANE);
+  for (let p = 0; p < W * H; p++) {
+    const c = classify(d[p * 4], d[p * 4 + 1], d[p * 4 + 2]), byte = p >> 3, bit = 0x80 >> (p & 7);
+    if (c === 1) bw[byte] &= ~bit; else if (c === 2) rd[byte] |= bit;
+  }
+  return { bw, rd };
+}
+function rgbaFromPlanes(bw, rd, d) {
+  for (let p = 0; p < W * H; p++) {
+    const bit = 0x80 >> (p & 7), byte = p >> 3;
+    const c = (rd[byte] & bit) ? RED_RGB : ((bw[byte] & bit) ? PAPER_RGB : INK_RGB);
+    d[p * 4] = c[0]; d[p * 4 + 1] = c[1]; d[p * 4 + 2] = c[2]; d[p * 4 + 3] = 255;
+  }
+}
+// Floyd-Steinberg dithering to black/white (and red if useRed). Writes the result back into d.
+function ditherRGBA(d, useRed) {
+  const f = new Float32Array(W * H * 3);
+  for (let p = 0; p < W * H; p++) { f[p * 3] = d[p * 4]; f[p * 3 + 1] = d[p * 4 + 1]; f[p * 3 + 2] = d[p * 4 + 2]; }
+  const spread = (x, y, w, er, eg, eb) => {
+    if (x < 0 || x >= W || y >= H) return;
+    const i = (y * W + x) * 3; f[i] += er * w; f[i + 1] += eg * w; f[i + 2] += eb * w;
+  };
+  const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 3, r = clamp(f[i]), g = clamp(f[i + 1]), b = clamp(f[i + 2]);
+    let t;
+    if (useRed && r > 140 && r - (g + b) / 2 > 70) t = RED_RGB;
+    else t = (0.299 * r + 0.587 * g + 0.114 * b) < 128 ? [0, 0, 0] : [255, 255, 255];
+    const er = r - t[0], eg = g - t[1], eb = b - t[2];
+    spread(x + 1, y, 7 / 16, er, eg, eb); spread(x - 1, y + 1, 3 / 16, er, eg, eb);
+    spread(x, y + 1, 5 / 16, er, eg, eb); spread(x + 1, y + 1, 1 / 16, er, eg, eb);
+    const q = (y * W + x) * 4; d[q] = t[0]; d[q + 1] = t[1]; d[q + 2] = t[2]; d[q + 3] = 255;
+  }
+}
+// Mean brightness around every pixel (box of radius R), from an integral image.
+function localMean(L, R) {
+  const S = W + 1, I = new Float64Array(S * (H + 1)), M = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) { let row = 0; for (let x = 0; x < W; x++) { row += L[y * W + x]; I[(y + 1) * S + x + 1] = I[y * S + x + 1] + row; } }
+  for (let y = 0; y < H; y++) {
+    const y0 = Math.max(0, y - R), y1 = Math.min(H, y + R + 1);
+    for (let x = 0; x < W; x++) {
+      const x0 = Math.max(0, x - R), x1 = Math.min(W, x + R + 1);
+      M[y * W + x] = (I[y1 * S + x1] - I[y0 * S + x1] - I[y1 * S + x0] + I[y0 * S + x0]) / ((x1 - x0) * (y1 - y0));
+    }
+  }
+  return M;
+}
+function brightness(d) { const L = new Float32Array(W * H); for (let p = 0; p < W * H; p++) L[p] = 0.299 * d[p * 4] + 0.587 * d[p * 4 + 1] + 0.114 * d[p * 4 + 2]; return L; }
+// Text mode: a pixel is ink when it is clearly darker than its surroundings. Works for screenshots and for
+// photographed pages with uneven light, and keeps thin letters from fading away when a picture is shrunk.
+function thresholdRGBA(d, useRed) {
+  const L = brightness(d), M = localMean(L, 14);
+  for (let p = 0; p < W * H; p++) {
+    const r = d[p * 4], g = d[p * 4 + 1], b = d[p * 4 + 2];
+    let c;
+    if (useRed && r - (g + b) / 2 > 55 && L[p] < 225) c = RED_RGB;
+    else c = (L[p] < M[p] * 0.82 || L[p] < 80) ? [0, 0, 0] : [255, 255, 255];
+    d[p * 4] = c[0]; d[p * 4 + 1] = c[1]; d[p * 4 + 2] = c[2]; d[p * 4 + 3] = 255;
+  }
+}
+// Is the area text or a drawing (almost only dark and light, few mid-greys) rather than a photo?
+function looksLikeText(d, rect) {
+  const L = brightness(d);
+  const x0 = Math.max(0, Math.floor(rect.x)), y0 = Math.max(0, Math.floor(rect.y));
+  const x1 = Math.min(W, Math.ceil(rect.x + rect.w)), y1 = Math.min(H, Math.ceil(rect.y + rect.h));
+  let mid = 0, n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const v = L[y * W + x]; n++; if (v > 60 && v < 195) mid++; }
+  return n > 0 && mid / n < 0.22;
+}
+function fitRect(bw, bh) { const s = Math.min(W / bw, H / bh), w = bw * s, h = bh * s; return { x: (W - w) / 2, y: (H - h) / 2, w, h }; }
+function clampRect(r, keep = 24) {   // the picture may hang over the edge, but never disappear
+  r.x = Math.min(W - keep, Math.max(-(r.w - keep), r.x)); r.y = Math.min(H - keep, Math.max(-(r.h - keep), r.y)); return r;
+}
+function scaleRect(r, factor, ax, ay) {   // resize about the point (ax, ay), keeping the aspect ratio
+  const w = Math.min(Math.max(r.w * factor, 24), W * 4), f = w / r.w;
+  return { x: ax - (ax - r.x) * f, y: ay - (ay - r.y) * f, w, h: r.h * f };
+}
+// ==== PURE END
+
+const $ = id => document.getElementById(id);
+const cv = $("c"); cv.width = W; cv.height = H;
+const fc = $("fc"); fc.width = W; fc.height = H;
+document.documentElement.style.setProperty("--ar", W / H);
+const ctx = cv.getContext("2d", { willReadFrequently: true });
+const fctx = fc.getContext("2d");
+let client = null, P = "", touched = false, everConnected = false, tool = "k", sizeIdx = 1, colorPics = false, picMode = "auto", dateOn = false;
+const undoStack = []; let loginTimer = null, syncTimer = null, restoreTimer = null;
+
+function blank() { ctx.fillStyle = PAPER; ctx.fillRect(0, 0, W, H); }
+blank();
+try { $("user").value = localStorage.getItem("pp_user") || ""; } catch (e) {}
+
+function toast(t) { const el = $("toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 2200); }
+function send(bytes) { if (client && client.connected) client.publish(P + "cmd", bytes); }
+
+// ---- sign in: each account has its own topic namespace, so each display is separate
+$("login").addEventListener("submit", e => {
+  e.preventDefault();
+  if (!BROKER || BROKER.startsWith("YOUR-ADDRESS")) { $("err").textContent = T.setBroker; return; }
+  const user = $("user").value.trim();
+  try { localStorage.setItem("pp_user", user); } catch (e2) {}
+  P = "penpad/" + user + "/"; everConnected = false; $("err").textContent = T.loginBusy;
+  clearTimeout(loginTimer);
+  loginTimer = setTimeout(() => { if (!everConnected) { $("err").textContent = T.noReach; client.end(true); } }, 10000);
+  client = mqtt.connect("wss://" + BROKER + ":8084/mqtt", {
+    username: user, password: $("pass").value,
+    clientId: "web-" + Math.random().toString(16).slice(2, 8), reconnectPeriod: 3000
+  });
+  client.on("connect", () => {
+    if (!everConnected) { clearTimeout(loginTimer); everConnected = true; $("login").classList.add("hidden"); $("app").classList.remove("hidden"); layoutDateZone(); }
+    $("lampBroker").classList.add("on"); $("tBroker").textContent = T.connected;
+    client.subscribe([P + "status", P + "settings", P + "frame/#"]);
+    if (touched) scheduleSync(500);
+  });
+  client.on("close", () => { $("lampBroker").classList.remove("on"); $("tBroker").textContent = T.reconnecting; });
+  client.on("error", err => {
+    if (!everConnected) { clearTimeout(loginTimer); $("err").textContent = /not authorized|bad user/i.test(err.message) ? T.wrong : T.cannot; client.end(true); }
+  });
+  client.on("message", (topic, payload, packet) => {
+    if (topic.startsWith(P + "frame/")) { onFrame(topic.slice((P + "frame/").length), payload, packet.retain); return; }
+    const txt = new TextDecoder().decode(payload);
+    if (topic === P + "status") { const on = txt === "online"; $("lampPico").classList.toggle("on", on); $("tPico").textContent = on ? T.dispOn : T.dispOff; }
+    if (topic === P + "settings") { try { dateOn = !!JSON.parse(txt).date; applyDateUI(); } catch (e3) {} }
+  });
+});
+$("logout").onclick = () => { if (client) client.end(true); location.reload(); };
+
+// ---- tools
+function setTool(t) { tool = t; for (const [k, id] of [["k", "penK"], ["r", "penR"], ["e", "eraser"]]) $(id).setAttribute("aria-pressed", k === t); }
+$("penK").onclick = () => setTool("k"); $("penR").onclick = () => setTool("r"); $("eraser").onclick = () => setTool("e");
+document.querySelectorAll(".size").forEach(b => b.onclick = () => {
+  sizeIdx = +b.dataset.i; document.querySelectorAll(".size").forEach(x => x.setAttribute("aria-pressed", x === b));
+});
+const penColor = () => tool === "r" ? RED : tool === "e" ? PAPER : INK;
+const penSize = () => SIZES[sizeIdx] * (tool === "e" ? 3 : 1);
+
+function snapshot() { undoStack.push(ctx.getImageData(0, 0, W, H)); if (undoStack.length > 10) undoStack.shift(); }
+function snapToPalette() {   // make the preview show exactly what the e-paper can show
+  const img = ctx.getImageData(0, 0, W, H), { bw, rd } = planesFromRGBA(img.data);
+  rgbaFromPlanes(bw, rd, img.data); ctx.putImageData(img, 0, 0);
+}
+$("undo").onclick = () => { const s = undoStack.pop(); if (!s) return; ctx.putImageData(s, 0, 0); touched = true; scheduleSync(3000); };
+$("clear").onclick = () => { snapshot(); blank(); touched = true; scheduleSync(3000); };
+
+// ---- drawing: nothing is sent while you draw (e-paper is slow); the page sends after a pause
+let drawing = false, last = null;
+function pos(e) {
+  const r = cv.getBoundingClientRect();
+  return [Math.max(0, Math.min(W - 1, Math.round((e.clientX - r.left) * W / r.width))),
+          Math.max(0, Math.min(H - 1, Math.round((e.clientY - r.top) * H / r.height)))];
+}
+function seg(a, b) {
+  ctx.strokeStyle = penColor(); ctx.lineWidth = penSize(); ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(a[0] + .5, a[1] + .5); ctx.lineTo(b[0] + .5, b[1] + .5); ctx.stroke();
+}
+function endStroke() { if (!drawing) return; drawing = false; snapToPalette(); scheduleSync(AUTO_SEND_MS); }
+cv.addEventListener("pointerdown", e => { try { cv.setPointerCapture(e.pointerId); } catch (_) {} clearTimeout(syncTimer); snapshot(); drawing = true; touched = true; last = pos(e); seg(last, last); });
+cv.addEventListener("pointermove", e => { if (!drawing) return; const p = pos(e); seg(last, p); last = p; });
+cv.addEventListener("pointerup", endStroke);
+cv.addEventListener("pointercancel", endStroke);
+for (const ev of ["contextmenu", "selectstart", "dragstart"]) cv.addEventListener(ev, e => e.preventDefault());
+
+// ---- saved drawing: two planes stored on the broker as retained messages
+// (10 chunks of 30 rows each: frame/w/0..9 black-white, frame/r/0..9 red). The display reads them whenever it connects.
+const synced = {}, remote = { bw: new Uint8Array(PLANE).fill(0xFF), rd: new Uint8Array(PLANE) };
+function scheduleSync(ms) { clearTimeout(syncTimer); syncTimer = setTimeout(autoSend, ms); }
+function autoSend() { if (syncFrames(false)) toast(T.sent); }
+function syncFrames(force) {
+  if (!client || !client.connected) return 0;
+  const { bw, rd } = planesFromRGBA(ctx.getImageData(0, 0, W, H).data);
+  let sent = 0;
+  for (const [kind, plane] of [["w", bw], ["r", rd]]) for (let n = 0; n < NCH; n++) {
+    const chunk = plane.slice(n * CHB, (n + 1) * CHB), key = kind + n, old = synced[key];
+    if (!force && old && old.every((v, i) => v === chunk[i])) continue;
+    synced[key] = chunk; client.publish(P + "frame/" + kind + "/" + n, chunk, { retain: true, qos: 1 }); sent++;
+  }
+  return sent;
+}
+function onFrame(sub, payload, retained) {
+  const [kind, num] = sub.split("/"), n = +num;
+  if (payload.length !== CHB || !(n >= 0 && n < NCH) || (kind !== "w" && kind !== "r")) return;
+  synced[kind + n] = new Uint8Array(payload);
+  if (!retained) return;
+  (kind === "w" ? remote.bw : remote.rd).set(payload, n * CHB);
+  clearTimeout(restoreTimer);
+  restoreTimer = setTimeout(() => {   // only restore stored state into an untouched page
+    if (touched) return;
+    const img = ctx.createImageData(W, H); rgbaFromPlanes(remote.bw, remote.rd, img.data); ctx.putImageData(img, 0, 0);
+  }, 300);
+}
+$("sendimg").onclick = () => {
+  if (!client || !client.connected) { toast(T.notConnected); return; }
+  clearTimeout(syncTimer); syncFrames(false); send(new Uint8Array([4]));   // 4 = redraw the e-paper now
+  toast(T.sending);
+};
+window.addEventListener("pagehide", () => syncFrames(false));
+
+// ---- date on the display (the display draws it itself, every day, in the bottom-right corner)
+const DATE_MAXW = 90, DATE_GH = 14, DATE_PAD = 3, DATE_MX = 8, DATE_MY = 6;   // same numbers as the display uses
+function layoutDateZone() {
+  const sc = cv.clientWidth / W, z = $("datezone");
+  if (!sc) return;
+  z.style.width = (DATE_MAXW + 2 * DATE_PAD) * sc + "px"; z.style.height = (DATE_GH + 2 * DATE_PAD) * sc + "px";
+  z.style.right = (DATE_MX - DATE_PAD) * sc + "px"; z.style.bottom = (DATE_MY - DATE_PAD) * sc + "px";
+  z.style.paddingRight = DATE_PAD * sc + "px"; z.style.fontSize = DATE_GH * sc * 0.95 + "px";
+}
+function applyDateUI() { $("datebtn").setAttribute("aria-pressed", dateOn); $("datezone").classList.toggle("hidden", !dateOn); $("datetxt").textContent = dateTextFor(new Date()); layoutDateZone(); }
+$("datebtn").onclick = () => {
+  if (!client || !client.connected) { toast(T.notConnected); return; }
+  dateOn = !dateOn; applyDateUI();
+  client.publish(P + "settings", JSON.stringify({ date: dateOn }), { retain: true, qos: 1 });
+  toast(dateOn ? T.dateOn : T.dateOff);
+};
+if (window.ResizeObserver) new ResizeObserver(layoutDateZone).observe(cv); else window.addEventListener("resize", layoutDateZone);
+
+// ---- pictures: Ctrl+V, paste button, or file / camera. A picture first floats above the page:
+// drag it, pinch / scroll / drag the corner to resize it, then press the tick to place it.
+const tmp = document.createElement("canvas"); tmp.width = W; tmp.height = H;
+const tctx = tmp.getContext("2d", { willReadFrequently: true });
+let fl = null, procTimer = null;       // fl = { src, x, y, w, h, proc, procKey }
+function progressive(src, tw, th) {    // shrink in halving steps, so thin lines survive (Safari has no good one-step shrink)
+  let cur = src, cw = src.width, ch = src.height;
+  while (cw >= tw * 2 && ch >= th * 2 && cw > 2 && ch > 2) {
+    const c = document.createElement("canvas"); c.width = Math.ceil(cw / 2); c.height = Math.ceil(ch / 2);
+    const x = c.getContext("2d"); x.imageSmoothingQuality = "high"; x.drawImage(cur, 0, 0, c.width, c.height);
+    cur = c; cw = c.width; ch = c.height;
+  }
+  return cur;
+}
+function rasterize(f) {                // the picture as the display will show it: black / white / red only
+  tctx.fillStyle = "#fff"; tctx.fillRect(0, 0, W, H);
+  tctx.imageSmoothingQuality = "high";
+  tctx.drawImage(progressive(f.src, Math.max(1, Math.round(f.w)), Math.max(1, Math.round(f.h))), f.x, f.y, f.w, f.h);
+  const img = tctx.getImageData(0, 0, W, H);
+  let mode = picMode;
+  if (mode === "auto") mode = looksLikeText(img.data, f) ? "text" : "photo";
+  if (mode === "text") thresholdRGBA(img.data, colorPics); else ditherRGBA(img.data, colorPics);
+  const { bw, rd } = planesFromRGBA(img.data); rgbaFromPlanes(bw, rd, img.data);   // use paper and ink colours
+  return { img, mode };
+}
+const procKey = f => [f.x, f.y, f.w, f.h].map(v => Math.round(v * 100)).join(",") + picMode + colorPics;
+function renderFloat() {
+  fctx.clearRect(0, 0, W, H);
+  if (!fl) return;
+  if (fl.proc && fl.procKey === procKey(fl)) {
+    const x0 = Math.max(0, Math.floor(fl.x)), y0 = Math.max(0, Math.floor(fl.y));
+    const x1 = Math.min(W, Math.ceil(fl.x + fl.w)), y1 = Math.min(H, Math.ceil(fl.y + fl.h));
+    if (x1 > x0 && y1 > y0) fctx.putImageData(fl.proc.img, 0, 0, x0, y0, x1 - x0, y1 - y0);
+  } else {
+    fctx.fillStyle = "#fff"; fctx.fillRect(fl.x, fl.y, fl.w, fl.h);
+    fctx.imageSmoothingQuality = "low"; fctx.drawImage(fl.src, fl.x, fl.y, fl.w, fl.h);
+  }
+  fctx.save(); fctx.strokeStyle = "#d9822b"; fctx.lineWidth = 1.5; fctx.setLineDash([5, 3]);
+  fctx.strokeRect(fl.x + .5, fl.y + .5, fl.w - 1, fl.h - 1); fctx.restore();
+  fctx.fillStyle = "#d9822b"; fctx.fillRect(fl.x + fl.w - 7, fl.y + fl.h - 7, 12, 12);   // corner handle
+}
+function scheduleProc() {
+  clearTimeout(procTimer);
+  procTimer = setTimeout(() => {
+    if (!fl) return;
+    fl.proc = rasterize(fl); fl.procKey = procKey(fl); renderFloat();
+    if (picMode === "auto" && !fl.told) { fl.told = true; toast(fl.proc.mode === "text" ? T.autoText : T.autoPhoto); }
+  }, 180);
+}
+function showModeBadge() { $("modebadge").textContent = { auto: "A", text: "T", photo: "F" }[picMode]; }
+function startFloat(src, bw0, bh0) {
+  fl = Object.assign({ src, proc: null, procKey: "", told: false }, fitRect(bw0, bh0));
+  document.body.classList.add("floating"); $("floatbar").classList.remove("hidden"); fc.classList.remove("hidden");
+  showModeBadge(); renderFloat(); scheduleProc();
+}
+function endFloat() {
+  fl = null; clearTimeout(procTimer); ptrs.clear(); g = null; fctx.clearRect(0, 0, W, H);
+  document.body.classList.remove("floating"); $("floatbar").classList.add("hidden"); fc.classList.add("hidden");
+}
+function placeFloat() {
+  if (!fl) return;
+  const { img } = (fl.proc && fl.procKey === procKey(fl)) ? fl.proc : rasterize(fl);
+  const x0 = Math.max(0, Math.floor(fl.x)), y0 = Math.max(0, Math.floor(fl.y));
+  const x1 = Math.min(W, Math.ceil(fl.x + fl.w)), y1 = Math.min(H, Math.ceil(fl.y + fl.h));
+  snapshot();
+  if (x1 > x0 && y1 > y0) ctx.putImageData(img, 0, 0, x0, y0, x1 - x0, y1 - y0);
+  endFloat(); touched = true; scheduleSync(1500);
+}
+function change(rect) { Object.assign(fl, clampRect(rect)); fl.proc = null; renderFloat(); scheduleProc(); }
+
+const ptrs = new Map(); let g = null;
+function cpos(e) { const r = fc.getBoundingClientRect(); return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height }; }
+function beginGesture() {
+  const pts = [...ptrs.values()];
+  if (!fl || !pts.length) { g = null; return; }
+  if (pts.length === 1) {
+    const p = pts[0];
+    if (Math.hypot(p.x - (fl.x + fl.w), p.y - (fl.y + fl.h)) < 18) g = { type: "resize", dx: fl.x + fl.w - p.x };
+    else g = { type: "move", px: p.x, py: p.y, ox: fl.x, oy: fl.y };
+  } else {
+    const [a, b] = pts;
+    g = { type: "pinch", d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, r0: { x: fl.x, y: fl.y, w: fl.w, h: fl.h } };
+  }
+}
+function updateGesture() {
+  if (!g || !fl) return;
+  const pts = [...ptrs.values()];
+  if (g.type === "move") fl.x = g.ox + (pts[0].x - g.px), fl.y = g.oy + (pts[0].y - g.py);
+  else if (g.type === "resize") { const w = Math.min(Math.max(pts[0].x + g.dx - fl.x, 24), W * 4); fl.h *= w / fl.w; fl.w = w; }
+  else if (g.type === "pinch" && pts.length >= 2) {
+    const [a, b] = pts, m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const r = scaleRect(g.r0, Math.hypot(a.x - b.x, a.y - b.y) / g.d0, g.m0.x, g.m0.y);
+    r.x += m.x - g.m0.x; r.y += m.y - g.m0.y; Object.assign(fl, r);
+  }
+  clampRect(fl); fl.proc = null; renderFloat();
+}
+fc.addEventListener("pointerdown", e => { if (!fl) return; e.preventDefault(); try { fc.setPointerCapture(e.pointerId); } catch (_) {} ptrs.set(e.pointerId, cpos(e)); beginGesture(); });
+fc.addEventListener("pointermove", e => { if (!ptrs.has(e.pointerId)) return; ptrs.set(e.pointerId, cpos(e)); updateGesture(); });
+const gestureEnd = e => { ptrs.delete(e.pointerId); beginGesture(); if (!ptrs.size) scheduleProc(); };
+fc.addEventListener("pointerup", gestureEnd); fc.addEventListener("pointercancel", gestureEnd);
+fc.addEventListener("wheel", e => {   // mouse wheel, and pinch on a trackpad (which arrives as wheel with ctrl held)
+  if (!fl) return; e.preventDefault();
+  const p = cpos(e); change(scaleRect(fl, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), p.x, p.y));
+}, { passive: false });
+for (const ev of ["contextmenu", "selectstart", "dragstart"]) fc.addEventListener(ev, e => e.preventDefault());
+const grow = f => { if (fl) change(scaleRect(fl, f, fl.x + fl.w / 2, fl.y + fl.h / 2)); };
+$("bigger").onclick = () => grow(1.12); $("smaller").onclick = () => grow(1 / 1.12);
+$("fitbtn").onclick = () => { if (fl) change(fitRect(fl.src.width, fl.src.height)); };
+$("okfloat").onclick = placeFloat; $("nofloat").onclick = endFloat;
+document.addEventListener("keydown", e => { if (!fl) return; if (e.key === "Enter") placeFloat(); else if (e.key === "Escape") endFloat(); else if (e.key === "+") grow(1.12); else if (e.key === "-") grow(1 / 1.12); });
+$("modebtn").onclick = () => {
+  picMode = { auto: "text", text: "photo", photo: "auto" }[picMode]; showModeBadge();
+  toast({ auto: T.modeAuto, text: T.modeText, photo: T.modePhoto }[picMode]);
+  if (fl) { fl.proc = null; fl.told = false; renderFloat(); scheduleProc(); }
+};
+$("colormode").onclick = () => {
+  colorPics = !colorPics; $("colormode").setAttribute("aria-pressed", colorPics);
+  $("colormode").title = colorPics ? "Bilder: svart, hvitt og rødt (trykk for svart-hvitt)" : "Bilder: svart-hvitt (trykk for rødt også)";
+  toast(colorPics ? T.picRed : T.picBW);
+  if (fl) { fl.proc = null; renderFloat(); scheduleProc(); }
+};
+
+async function loadImage(blob) {
+  if (fl) { toast(T.placeFirst); return; }
+  let bmp;
+  try { bmp = await createImageBitmap(blob, { imageOrientation: "from-image" }); } catch (_) { bmp = await createImageBitmap(blob); }
+  let src = bmp;
+  const big = Math.max(bmp.width, bmp.height);
+  if (big > 1600) { const k = 1600 / big; src = progressive(bmp, Math.round(bmp.width * k), Math.round(bmp.height * k)); }   // keep memory in check
+  startFloat(src, src.width, src.height);
+}
+document.addEventListener("paste", e => { const it = [...e.clipboardData.items].find(i => i.type.startsWith("image/")); if (it) loadImage(it.getAsFile()); });
+$("pastebtn").onclick = async () => {
+  try {
+    for (const it of await navigator.clipboard.read()) {
+      const t = it.types.find(x => x.startsWith("image/"));
+      if (t) { await loadImage(await it.getType(t)); return; }
+    }
+    toast(T.noClip);
+  } catch (e) { toast(T.clipBlocked); }
+};
+$("photo").onclick = () => $("file").click();
+$("file").onchange = e => { if (e.target.files[0]) loadImage(e.target.files[0]); e.target.value = ""; };
+</script>
+</body>
+</html>
