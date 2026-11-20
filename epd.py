@@ -9,6 +9,12 @@ import time
 
 W, H = 400, 300
 
+# ---- settings -------------------------------------------------------------
+FAST_BW = True    # True : updates that involve no red use the fast black/white refresh (about 1.3 s).
+                  # False: every update is a full refresh (10 to 25 s), exactly as before.
+FULL_EVERY = 10   # after this many fast updates in a row, do one full refresh to clear ghosting
+# ---------------------------------------------------------------------------
+
 
 class EPD:
     def __init__(self, hook=None):
@@ -18,6 +24,10 @@ class EPD:
         self.rst = Pin(21, Pin.OUT, value=1)
         self.busy = Pin(22, Pin.IN)
         self.hook = hook  # called while waiting, so the network connection stays alive
+        self.shown_bw = None      # copy of what is on the screen; None = unknown (after boot or an error)
+        self.shown_red = None
+        self.shown_has_red = False
+        self.fast_count = 0
 
     def _cmd(self, c, *data):
         self.cs(0); self.dc(0); self.spi.write(bytes([c]))
@@ -46,15 +56,39 @@ class EPD:
         self.cs(0); self.dc(0); self.spi.write(bytes([c]))
         self.dc(1); self.spi.write(buf); self.cs(1)
 
-    def show(self, bw, red):
-        """Full refresh, takes 10 to 25 seconds. Wakes the panel, draws, puts it back to sleep."""
+    def _wake(self):
         self.rst(0); time.sleep_ms(10); self.rst(1); time.sleep_ms(10)
         self._cmd(0x12); time.sleep_ms(10); self._wait("reset")
         self._cmd(0x01, (H - 1) & 255, (H - 1) >> 8, 0x00)
         self._cmd(0x3C, 0x05)
         self._cmd(0x18, 0x80)
-        self._plane(0x24, bw)
-        self._plane(0x26, red)
-        self._cmd(0x22, 0xF7); self._cmd(0x20)
-        self._wait("refresh")
+
+    def update(self, bw, red, force=False):
+        """Show the picture. Returns "fast", "full", or None when nothing needed to change.
+        Fast refresh is used only when neither the new picture nor the one on the screen has red,
+        the screen content is known, and FULL_EVERY fast updates have not been reached yet."""
+        has_red = any(red)
+        if (not force and self.shown_bw is not None and bw == self.shown_bw and red == self.shown_red):
+            return None
+        fast = (FAST_BW and self.shown_bw is not None and not has_red and not self.shown_has_red
+                and self.fast_count < FULL_EVERY)
+        old_bw = self.shown_bw
+        self.shown_bw = None   # unknown until this update has finished, so a failure forces a full refresh next time
+        self._wake()
+        if fast:
+            self._plane(0x26, old_bw)   # RAM 0x26 holds the "previous" picture for the black/white update
+            self._plane(0x24, bw)       # RAM 0x24 holds the new picture
+            self._cmd(0x22, 0xDC); self._cmd(0x20)
+            self._wait("fast refresh")
+            self.fast_count += 1
+        else:
+            self._plane(0x24, bw)
+            self._plane(0x26, red)
+            self._cmd(0x22, 0xF7); self._cmd(0x20)
+            self._wait("refresh")
+            self.fast_count = 0
         self._cmd(0x10, 0x11)  # deep sleep, the image stays
+        self.shown_bw = bytearray(bw)
+        self.shown_red = bytearray(red)
+        self.shown_has_red = has_red
+        return "fast" if fast else "full"

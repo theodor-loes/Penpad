@@ -16,6 +16,7 @@ red = bytearray(CH * NCH)              # 1 = red
 planes = {b"w": bw, b"r": red}
 dirty = False        # screen content differs from what is shown
 first = True         # after boot, redraw once even if the data looks unchanged
+force = False        # "send now" from the page: redraw even if nothing changed
 last_frame_ms = 0
 last_ping = 0
 client = None
@@ -51,7 +52,7 @@ def wifi():
 
 
 def on_msg(topic, msg):
-    global dirty, last_frame_ms
+    global dirty, last_frame_ms, force
     if topic.startswith(T_FRAME):
         kind, _, num = topic[len(T_FRAME):].partition(b"/")
         n = int(num.decode())
@@ -67,6 +68,7 @@ def on_msg(topic, msg):
         last_frame_ms = time.ticks_ms()
     elif topic == T_CMD and msg[:1] == b"\x04":   # "refresh now" from the web page
         dirty = True
+        force = True
         last_frame_ms = time.ticks_ms()
 
 
@@ -97,7 +99,7 @@ def connect_mqtt():
 
 
 def run():
-    global client, last_ping, dirty, first, fails
+    global client, last_ping, dirty, first, fails, force
     gc.collect()
     wifi()
     print("MQTT: connecting...")
@@ -112,8 +114,9 @@ def run():
             client.check_msg()
             now = time.ticks_ms()
             if dirty and time.ticks_diff(now, last_frame_ms) > 2500:   # wait until the chunks stopped arriving
-                print("refreshing e-paper...")
-                epd.show(bw, red)
+                mode = epd.update(bw, red, force)
+                print("e-paper:", mode or "unchanged")
+                force = False
                 dirty = False
                 first = False
                 last_ping = time.ticks_ms()
