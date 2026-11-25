@@ -18,10 +18,7 @@ SETUP_RETRY_MIN = 60         # after the setup page timed out, wait this long be
 
 
 class SetupNeeded(Exception):
-    """Raised when the setup page has to open. The text says why: new, nowifi, wifipw, auth or button."""
-    def __init__(self, reason):
-        Exception.__init__(self, reason)
-        self.reason = reason
+    """Raised when the setup page has to open. The text (e.args[0]) says why: new, nowifi, wifipw, auth or button."""
 
 
 # The account (one topic namespace per account) comes from config.json or secrets.py, see apply_account()
@@ -64,7 +61,10 @@ def keepalive():
     global last_ping
     now = time.ticks_ms()
     if client and time.ticks_diff(now, last_ping) > 20000:
-        client.ping()
+        try:
+            client.ping()
+        except Exception:
+            pass            # a dead connection is dealt with by the main loop, never in the middle of a screen refresh
         last_ping = now
 
 
@@ -306,6 +306,7 @@ def run():
             time.sleep_ms(20)
     finally:
         close_quietly(client)
+        client = None       # the screen refresh must not ping a closed connection
 
 
 def open_setup(reason):
@@ -336,7 +337,7 @@ while True:
     try:
         run()
     except SetupNeeded as e:
-        open_setup(e.reason)
+        open_setup(e.args[0])
     except Exception as e:
         fails += 1
         print("error:", e, "(attempt %d)" % fails)

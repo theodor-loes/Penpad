@@ -218,6 +218,13 @@ class Portal:
 
 
 # ---- the server -------------------------------------------------------------
+def _text(b):
+    try:
+        return b.decode()
+    except Exception:
+        return ""
+
+
 def _read_request(cl):
     data = b""
     while b"\r\n\r\n" not in data and len(data) < 4096:
@@ -226,7 +233,7 @@ def _read_request(cl):
             break
         data += chunk
     head, _, body = data.partition(b"\r\n\r\n")
-    lines = head.decode("utf-8", "ignore").split("\r\n")
+    lines = _text(head).split("\r\n")
     parts = lines[0].split(" ")
     clen = 0
     for ln in lines[1:]:
@@ -237,7 +244,7 @@ def _read_request(cl):
         if not chunk:
             break
         body += chunk
-    return (parts[0], parts[1] if len(parts) > 1 else "/", body.decode("utf-8", "ignore"))
+    return (parts[0], parts[1] if len(parts) > 1 else "/", _text(body))
 
 
 def _send(cl, html):
