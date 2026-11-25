@@ -15,7 +15,7 @@ The page and the display talk through a free cloud MQTT broker. Nothing else is 
 - **Drawing:** black and red pens, eraser, three sizes, undo, clear. Nothing is sent while you draw; the page sends 10 seconds after you stop.
 - **Pictures:** paste (Ctrl+V), pick a file or take a photo. The picture floats above the page: drag it, pinch or scroll to resize, drag the corner, then place it. Text pictures get a sharp threshold, photos get dithering (auto, text or photo mode). Black and white by default, red on request.
 - **Date:** a small switch shows the date in the bottom-right corner of the display in Norwegian, for example "Fre 20 Nov". The display draws it itself and updates it at midnight.
-- **Fast updates:** pictures without red refresh in about 1.3 seconds. Pictures with red take 10 to 25 seconds, with a lot of flashing. This is how three-colour e-paper works.
+- **Fast updates:** pictures without red refresh in about 1.3 seconds. Pictures with red take 10 to 25 seconds.
 - **Several displays:** every account has its own topic space (`penpad/<username>/`), so each display is separate. Add as many accounts as you need.
 - **Phone setup:** the display opens its own Wi-Fi network to set up Wi-Fi and account from a phone (see below), and remembers up to 10 networks.
 - **Home-screen app:** the page can be added to the iPad's home screen and opens full screen with its own icon.
