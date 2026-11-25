@@ -13,16 +13,23 @@ W, H = 400, 300
 FAST_BW = True    # True : updates that involve no red use the fast black/white refresh (about 1.3 s).
                   # False: every update is a full refresh (10 to 25 s), exactly as before.
 FULL_EVERY = 10   # after this many fast updates in a row, do one full refresh to clear ghosting
+# ESP32-S3 Super Mini wiring: GPIO numbers (the numbers printed on the board, not pin positions)
+PIN_BUSY = 1
+PIN_RES = 2
+PIN_DC = 4
+PIN_CS = 5
+PIN_SCK = 6
+PIN_SDI = 7       # the adapter's SDI (MOSI) pin
 # ---------------------------------------------------------------------------
 
 
 class EPD:
     def __init__(self, hook=None):
-        self.spi = SPI(0, baudrate=4_000_000, polarity=0, phase=0, sck=Pin(18), mosi=Pin(19))
-        self.cs = Pin(17, Pin.OUT, value=1)
-        self.dc = Pin(20, Pin.OUT, value=0)
-        self.rst = Pin(21, Pin.OUT, value=1)
-        self.busy = Pin(22, Pin.IN)
+        self.spi = SPI(1, baudrate=4_000_000, polarity=0, phase=0, sck=Pin(PIN_SCK), mosi=Pin(PIN_SDI))
+        self.cs = Pin(PIN_CS, Pin.OUT, value=1)
+        self.dc = Pin(PIN_DC, Pin.OUT, value=0)
+        self.rst = Pin(PIN_RES, Pin.OUT, value=1)
+        self.busy = Pin(PIN_BUSY, Pin.IN)
         self.hook = hook  # called while waiting, so the network connection stays alive
         self.shown_bw = None      # copy of what is on the screen; None = unknown (after boot or an error)
         self.shown_red = None
